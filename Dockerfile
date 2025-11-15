@@ -1,78 +1,51 @@
-# ---------------------------------------------------------------------
-# ETAPA 1: "builder" - Instalar dependencias de CPU
-# ---------------------------------------------------------------------
-# --- ¡CAMBIO! ---
-# Usamos la imagen "bullseye" normal, no la "slim".
-# Esta incluye todas las librerías de compilación de C++ necesarias.
-FROM python:3.11-bullseye as builder
+# 1. Usar la imagen de Python completa, que ya incluye build-essential
+FROM python:3.11-bullseye
 
 # Variables de entorno
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HF_HOME=/app/hf_cache
 
+# 2. Instalar TODAS las dependencias del sistema necesarias para compilar
+#    ¡La clave aquí es python3-dev!
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    ffmpeg \
+    cmake \
+    python3-dev \
+    git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3. Configurar el directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema (libsndfile y cmake)
-# build-essential ya está incluido en esta imagen base
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libsndfile1 \
-        cmake && \
-    rm -rf /var/lib/apt/lists/*
-
-# Actualizar pip
-RUN pip install --no-cache-dir --upgrade pip
-
-# Copiar el archivo de requisitos de CPU
+# 4. Copiar y instalar los requisitos de Python
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Instalar los paquetes en una carpeta separada
-# Ahora tendrá 'cmake' Y las librerías C++ para compilar 'onnx'
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-
-# ---------------------------------------------------------------------
-# ETAPA 2: "final" - La imagen de producción
-# ---------------------------------------------------------------------
-# Mantenemos la imagen "slim" para la etapa final, para que sea ligera
-FROM python:3.11-slim-bullseye
-
-# Variables de entorno
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-WORKDIR /app
-
-# Crear un usuario no-root para seguridad
-RUN addgroup --system app && adduser --system --ingroup app app
-
-# Instalar SOLO la dependencia de sistema necesaria para EJECUTAR
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends libsndfile1 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Crear los directorios para los volúmenes (según tu README)
-RUN mkdir -p /app/voices /app/reference_audio /app/outputs /app/logs /app/hf_cache && \
-    chown -R app:app /app
-
-# Copiar las dependencias instaladas de la etapa 'builder'
-# (Esto incluye el 'onnx' que ya se compiló)
-COPY --from=builder /install /usr/local
-
-# Copiar TODO el código de la aplicación
+# 5. Copiar el resto de la aplicación
 COPY . .
 
-# Asignar propiedad de todo el código al usuario 'app'
+# 6. Crear los directorios para los volúmenes
+#    (Usando /app/... como en el README)
+RUN mkdir -p /app/voices /app/reference_audio /app/outputs /app/logs /app/hf_cache
+
+# 7. Crear un usuario no-root por seguridad
+RUN addgroup --system app && adduser --system --ingroup app app
 RUN chown -R app:app /app
 
-# Cambiar al usuario no-root
+# 8. Cambiar al usuario no-root
 USER app
 
-# Exponer el puerto
+# 9. Exponer el puerto
 EXPOSE 8004
 
-# HEALTHCHECK
+# 10. HEALTHCHECK
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8004/api/ui/initial-data || exit 1
 
-# Comando para iniciar el servidor
+# 11. Comando para iniciar
 CMD ["python", "server.py"]
