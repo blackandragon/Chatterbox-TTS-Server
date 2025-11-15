@@ -1,7 +1,10 @@
 # ---------------------------------------------------------------------
 # ETAPA 1: "builder" - Instalar dependencias de CPU
 # ---------------------------------------------------------------------
-FROM python:3.11-slim-bullseye as builder
+# --- ¡CAMBIO! ---
+# Usamos la imagen "bullseye" normal, no la "slim".
+# Esta incluye todas las librerías de compilación de C++ necesarias.
+FROM python:3.11-bullseye as builder
 
 # Variables de entorno
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -9,15 +12,13 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# --- ¡LÍNEA CORREGIDA! ---
-# Instalar dependencias del sistema (libsndfile, cmake y build-essential)
+# Instalar dependencias del sistema (libsndfile y cmake)
+# build-essential ya está incluido en esta imagen base
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libsndfile1 \
-        cmake \
-        build-essential && \
+        cmake && \
     rm -rf /var/lib/apt/lists/*
-# -------------------------
 
 # Actualizar pip
 RUN pip install --no-cache-dir --upgrade pip
@@ -26,13 +27,13 @@ RUN pip install --no-cache-dir --upgrade pip
 COPY requirements.txt .
 
 # Instalar los paquetes en una carpeta separada
-# Ahora tendrá 'cmake' para poder compilar 'onnx'
+# Ahora tendrá 'cmake' Y las librerías C++ para compilar 'onnx'
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # ---------------------------------------------------------------------
 # ETAPA 2: "final" - La imagen de producción
 # ---------------------------------------------------------------------
-# Empezamos DE NUEVO desde una imagen limpia (sin cmake, sin build-essential)
+# Mantenemos la imagen "slim" para la etapa final, para que sea ligera
 FROM python:3.11-slim-bullseye
 
 # Variables de entorno
