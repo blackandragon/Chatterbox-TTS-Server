@@ -1,53 +1,74 @@
-FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
+# ---------------------------------------------------------------------
+# ETAPA 1: "builder" - Instalar dependencias de CPU
+# ---------------------------------------------------------------------
+FROM python:3.11-slim-bullseye as builder
 
-ARG RUNTIME=nvidia
-
-# Set environment variables
+# Variables de entorno para optimizar Python
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
-# Set the Hugging Face home directory for better model caching
-ENV HF_HOME=/app/hf_cache
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libsndfile1 \
-    ffmpeg \
-    python3 \
-    python3-pip \
-    python3-dev \
-    python3-venv \
-    git \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create a symlink for python3 to be python for convenience
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# Set up working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Instalar dependencias del sistema (libsndfile es necesario)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libsndfile1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Actualizar pip
+RUN pip install --no-cache-dir --upgrade pip
+
+# Copiar el archivo de requisitos de CPU
+# ¡Este es el archivo correcto para CPU según la documentación que enviaste!
 COPY requirements.txt .
 
-# Upgrade pip and install Python dependencies
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir -r requirements.txt
-# Conditionally install NVIDIA dependencies if RUNTIME is set to 'nvidia'
-COPY requirements-nvidia.txt .
+# Instalar los paquetes en una carpeta separada
+# Esto aprovecha la caché de Docker
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-RUN if [ "$RUNTIME" = "nvidia" ]; then \
-    pip3 install --no-cache-dir -r requirements-nvidia.txt; \
-    fi
-# Copy the rest of the application code
+# ---------------------------------------------------------------------
+# ETAPA 2: "final" - La imagen de producción
+# ---------------------------------------------------------------------
+# Empezamos DE NUEVO desde una imagen limpia
+FROM python:3.11-slim-bullseye
+
+# Variables de entorno
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Crear un usuario no-root para seguridad
+RUN addgroup --system app && adduser --system --ingroup app app
+
+# Instalar la dependencia de sistema (libsndfile)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libsndfile1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Crear los directorios para los volúmenes (según tu README)
+# Damos permisos al usuario 'app'
+RUN mkdir -p /app/voices /app/reference_audio /app/outputs /app/logs /app/hf_cache && \
+    chown -R app:app /app
+
+# Copiar las dependencias instaladas de la etapa 'builder'
+COPY --from=builder /install /usr/local
+
+# Copiar TODO el código de la aplicación
 COPY . .
 
-# Create required directories for the application (fixed syntax error)
-RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
+# Asignar propiedad de todo el código al usuario 'app'
+RUN chown -R app:app /app
 
-# Expose the port the application will run on
+# Cambiar al usuario no-root
+USER app
+
+# Exponer el puerto (el README menciona 8004 como ejemplo)
 EXPOSE 8004
 
-# Command to run the application
-CMD ["python3", "server.py"]
+# HEALTHCHECK para que EasyPanel sepa si la app está sana
+# (El README menciona /api/ui/initial-data como un buen endpoint)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:8004/api/ui/initial-data || exit 1
+
+# Comando para iniciar el servidor (según tu README)
+CMD ["python", "server.py"]
