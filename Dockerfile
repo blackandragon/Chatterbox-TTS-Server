@@ -1,51 +1,46 @@
-# 1. Usar la imagen de Python completa, que ya incluye build-essential
-FROM python:3.11-bullseye
+FROM rocm/dev-ubuntu-22.04:latest
 
-# Variables de entorno
+# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
+# Set the Hugging Face home directory for better model caching
 ENV HF_HOME=/app/hf_cache
 
-# 2. Instalar TODAS las dependencias del sistema necesarias para compilar
-#    ¡La clave aquí es python3-dev!
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libsndfile1 \
     ffmpeg \
-    cmake \
+    python3 \
+    python3-pip \
     python3-dev \
+    python3-venv \
     git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Configurar el directorio de trabajo
+# Create a symlink for python3 to be python for convenience
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# Set up working directory
 WORKDIR /app
 
-# 4. Copiar y instalar los requisitos de Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements first to leverage Docker cache
+COPY requirements-rocm.txt ./requirements.txt
 
-# 5. Copiar el resto de la aplicación
+# Upgrade pip and install Python dependencies
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code
 COPY . .
 
-# 6. Crear los directorios para los volúmenes
-#    (Usando /app/... como en el README)
-RUN mkdir -p /app/voices /app/reference_audio /app/outputs /app/logs /app/hf_cache
+# Create required directories for the application (fixed syntax error)
+RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
 
-# 7. Crear un usuario no-root por seguridad
-RUN addgroup --system app && adduser --system --ingroup app app
-RUN chown -R app:app /app
-
-# 8. Cambiar al usuario no-root
-USER app
-
-# 9. Exponer el puerto
+# Expose the port the application will run on
 EXPOSE 8004
 
-# 10. HEALTHCHECK
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -f http://localhost:8004/api/ui/initial-data || exit 1
-
-# 11. Comando para iniciar
-CMD ["python", "server.py"]
+# Command to run the application
+CMD ["python3", "server.py"]
